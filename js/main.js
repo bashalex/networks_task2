@@ -1,17 +1,9 @@
 // Connect to PeerJS, have server assign an ID instead of providing one
 // Showing off some of the configs available with PeerJS :).
 var peer = new Peer('bashalex', {
-  // Set API key for cloud server (you don't need this if you're running your
-  // own.
   host: '127.0.0.1',
   port: 9000,
-  // Set highest debug level (log everything!).
-  debug: 3,
-  // Set a logging function:
-  logFunction: function() {
-    var copy = Array.prototype.slice.call(arguments).join(' ');
-    $('.log').append(copy + '<br>');
-  }
+  debug: 3
 });
 var connectedPeers = {};
 // Show this peer's ID.
