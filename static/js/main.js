@@ -1,6 +1,6 @@
 // Connect to PeerJS, have server assign an ID instead of providing one
 // Showing off some of the configs available with PeerJS :).
-var peer = new Peer('bashalex', {
+var peer = new Peer(Math.random().toString(36).slice(2), {
   host: '127.0.0.1',
   port: 9000,
   debug: 3

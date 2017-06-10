@@ -2,6 +2,7 @@
   "author": "Alex Bash",
   "private": true,
   "dependencies": {
-    "peer": "^0.2.8"
+    "peer": "^0.2.8",
+    "express": "^4.15.3"
   }
 }
