@@ -1,0 +1,7 @@
+{
+  "author": "Alex Bash",
+  "private": true,
+  "dependencies": {
+    "peer": "^0.2.8"
+  }
+}
