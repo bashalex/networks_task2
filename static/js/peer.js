@@ -72,11 +72,11 @@ DataConnection.prototype._configureDataChannel = function() {
   if (util.supports.sctp) {
     this._dc.binaryType = 'arraybuffer';
   }
-  this._dc.onopen = function() {
-    util.log('Data channel connection success');
-    self.open = true;
-    self.emit('open');
-  }
+  // this._dc.onopen = function() {
+  //   util.log('Data channel connection success');
+  //   self.open = true;
+  //   self.emit('open');
+  // }
 
   // Use the Reliable shim for non Firefox browsers
   if (!util.supports.sctp && this.reliable) {
@@ -266,6 +266,12 @@ DataConnection.prototype.handleMessage = function(message) {
       break;
     case 'CANDIDATE':
       Negotiator.handleCandidate(this, payload.candidate);
+      util.log('Data channel connection success');
+      console.log("emiting", this.open);
+      if (!this.open) {
+        this.open = true;
+        this.emit('open');
+      }
       break;
     default:
       util.warn('Unrecognized message type:', message.type, 'from peer:', this.peer);
@@ -406,6 +412,7 @@ Negotiator._idPrefix = 'pc_';
 
 /** Returns a PeerConnection object set up correctly (for data, media). */
 Negotiator.startConnection = function(connection, options) {
+  console.log('Start connection', connection, options);
   var pc = Negotiator._getPeerConnection(connection, options);
 
   if (connection.type === 'media' && options._stream) {
@@ -598,6 +605,7 @@ Negotiator.cleanup = function(connection) {
 }
 
 Negotiator._makeOffer = function(connection) {
+  console.log('Make offer', connection);
   var pc = connection.pc;
   pc.createOffer(function(offer) {
     util.log('Created offer.');
@@ -932,6 +940,7 @@ Peer.prototype._handleMessage = function(message) {
         }
         // Find messages.
         var messages = this._getMessages(connectionId);
+        console.log(messages);
         for (var i = 0, ii = messages.length; i < ii; i += 1) {
           connection.handleMessage(messages[i]);
         }
