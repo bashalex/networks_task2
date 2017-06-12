@@ -1,18 +1,17 @@
-// Connect to PeerJS
+/*
+
+Setup connection and init random variables
+
+*/
 var peer = new Peer(Math.random().toString(36).slice(2), {
   host: '127.0.0.1',
   port: 9000,
-  debug: 3
+  debug: 1
 });
 
 var surnames = ['Ivanov', 'Pavlov', 'Sidorov', 'Vasnetsov', 'Petrov', 'Kuznetsov', 'Nikitin', 'Pushkin', 'Lermontov', 'Esenin', 'Bulgakov'];
 var names = ['Ivan', 'Petr', 'Aleksei', 'Kirill', 'Sergei', 'Anton', 'Aleksandr', 'Yury'];
 var domains = ['google', 'yandex', 'mail', 'rambler', 'yahooo', 'microsoft'];
-
-function choose(choices) {
-  var index = Math.floor(Math.random() * choices.length);
-  return choices[index];
-}
 
 var surname = choose(surnames);
 var name = choose(names);
@@ -40,6 +39,25 @@ peer.on('error', function(err) {
   console.log(err);
 })
 
+// Make sure things clean up properly.
+window.onbeforeunload = function(e) {
+  sendMessage(successor, {label: 'predcessor_leaving', data: localTable, predecessor: predecessor});
+
+};
+
+window.onunload = function(e) {
+  if (!!peer && !peer.destroyed) {
+    peer.destroy();
+  }
+};
+
+
+/*
+
+DATA
+
+*/
+
 var connections = {};
 var successor, predecessor;
 
@@ -49,82 +67,114 @@ var fingerTable = new Map();
 var fingersToFillLeft = m = 10;
 var fingersFilledLocaly = 0;
 
+/*
+
+Util Functions
+
+*/
+
+function choose(choices) {
+  var index = Math.floor(Math.random() * choices.length);
+  return choices[index];
+}
+
 function hash(key) {
   var number = bigint_from_string(sha1(key), 16);
   return bigint_number(bigint_mod(number, 1024));
 }
 
-function sendMessage(peer_id, message) {
-  console.log("SEND", message.label, "to", peer_id);
+function distance(from, to) {
+  return (Math.pow(2, m) - from + to) % Math.pow(2, m);
+}
 
-  if (connections[peer_id] != undefined && connections[peer_id].conn.open) {
-    connections[peer_id].conn.send(message);
+function fingerHash(idx) {
+  return (hash(peer.id) + Math.pow(2, idx)) % Math.pow(2, m);
+}
+
+function isBetweenClockwise(value, left, right) {
+  return distance(left, right) >= distance(left, value);
+}
+
+function findClosest(key) {
+  var min_dist = Math.pow(2, m);
+  var result = 0;
+  for (var i = m - 1; i >= 0; i -= 1) {
+    var key_hash = fingerHash(i);
+    if (distance(key_hash, key) < min_dist) {
+      min_dist = distance(key_hash, key);
+      result = key_hash;
+    }
+  }
+  return result;
+}
+
+/*
+
+Main Functions
+
+*/
+
+function sendMessage(recipient, message) {
+  if (connections[recipient] != undefined && connections[recipient].conn.open) {
+    console.log("SEND", message.label, "to", recipient);
+    connections[recipient].conn.send(message);
     return;
   }
 
-  if (connections[peer_id] == undefined) {
-    console.log("create new connection");
-    var new_connection = peer.connect(peer_id, {
-      serialization: 'json'
+  if (connections[recipient] == undefined) {
+    var new_connection = peer.connect(recipient, { serialization: 'json' });
+
+    connections[recipient] = {conn: new_connection, links: 1, message_queue: []};
+
+    connections[recipient].conn.on('data', function(data) {
+      onMsgReceived(recipient, data)
     });
 
-    connections[peer_id] = {conn: new_connection, links: 1, message_queue: []};
-
-    connections[peer_id].conn.on('data', function(data) {
-      onMsgReceived(peer_id, data)
-    });
-
-    connections[peer_id].conn.on('open', function() {
-      console.log("connection opened, sending messages from queue");
-      while (connections[peer_id].message_queue.length != 0) {        
-        var msg = connections[peer_id].message_queue.shift();
-        console.log("message from queue", msg);
-        connections[peer_id].conn.send(msg);
+    connections[recipient].conn.on('open', function() {
+      while (connections[recipient].message_queue.length != 0) {        
+        var msg = connections[recipient].message_queue.shift();
+        console.log("SEND", msg.label, "to", recipient);
+        connections[recipient].conn.send(msg);
       }
     });
 
-    connections[peer_id].conn.on('close', function() {
-      delete connections[peer_id];
+    connections[recipient].conn.on('close', function() {
+      console.log("CLOSE connection with", recipient);
+      delete connections[recipient];
     });
   }
 
-  if (connections[peer_id].conn.open) {
-    connections[peer_id].conn.send(message);
-  } else {
-    connections[peer_id].message_queue.push(message);
-  }
+  connections[recipient].message_queue.push(message);
 }
 
 function lookup(key) {
-  if ((hash(predecessor) > hash(peer.id) && (key > hash(predecessor) || key <= hash(peer.id)))
-    || (hash(predecessor) < hash(peer.id) && (key > hash(predecessor) && key <= hash(peer.id)))) {
-    console.log('lookup returns', peer.id, 'for', key);
+  if (isBetweenClockwise(key, hash(predecessor), hash(peer.id))) {
     return peer.id;
   }
 
-  var min_dist = Math.pow(2, m);
-  var res = 0;
-  for (var i = m - 1; i >= 0; i -= 1) {
-    var key_hash = (hash(peer.id) + Math.pow(2, i)) % Math.pow(2, m);
-    var dist = (Math.pow(2, m) - key_hash + key) % Math.pow(2, m);
-    if (dist < min_dist) {
-      min_dist = dist;
-      res = key_hash;
-    }
-  }
+  var result = findClosest(key);
+  return fingerTable.get(result);
+}
 
-  console.log('lookup returns', fingerTable.get(res), 'for', key);
-  return fingerTable.get(res);
+function fillLocalTable(locally) {
+   // fill local table with own info
+  insertToLocalTable(name, peer.id);
+  insertToLocalTable(surname, peer.id);
+  insertToLocalTable(email, peer.id);
+
+  if (!locally) {
+    // find owner for our data
+    findWhereToInsert(name);
+    findWhereToInsert(surname);
+    findWhereToInsert(email);
+  }
 }
 
 function selectDataToMove(new_peer) {
   var key = hash(new_peer);
   var result = {};
   for (var key_hash in localTable) {
-    var old_dist = (Math.pow(2, m) - key_hash + hash(peer.id)) % Math.pow(2, m);
-    var new_dist = (Math.pow(2, m) - key_hash + hash(new_peer)) % Math.pow(2, m);
-    console.log(key_hash, peer.id, new_peer, old_dist, new_dist);
-    if (new_dist < old_dist) {
+    if (distance(key_hash, hash(new_peer)) < distance(key_hash, hash(peer.id))) {
       result[key_hash] = localTable[key_hash];
       delete localTable[key_hash];
     }
@@ -133,11 +183,7 @@ function selectDataToMove(new_peer) {
 }
 
 function insertToLocalTable(key, value) {
-  console.log(key, hash(key));
-  if (localTable[hash(key)] == undefined) {
-    localTable[hash(key)] = [];
-  }
-
+  if (localTable[hash(key)] == undefined) localTable[hash(key)] = [];
   localTable[hash(key)].push({ key: key, value: value});
 }
 
@@ -151,11 +197,19 @@ function getFromLocalTable(key) {
   return null;
 }
 
+function findWhereToInsert(key) {
+  var potential_holder = lookup(hash(key));
+  if (potential_holder != peer.id) {
+    sendMessage(potential_holder, { label: 'lookup', key: hash(key), intention: 'insert_entry', initiator: peer.id });
+  }
+}
+
 function onMsgReceived(sender, data) {
+  console.log('RECEIVED from', sender, 'with label', data.label);
   switch(data.label) {
     case 'lookup':
       var potential_holder = lookup(data.key);
-      console.log("find lookup for", data.key, "node", potential_holder);
+
       if (potential_holder === peer.id) {
         sendMessage(data.initiator, { label: 'lookup_result', key: data.key, intention: data.intention, result: peer.id });
       } else {
@@ -166,7 +220,7 @@ function onMsgReceived(sender, data) {
 
     case 'lookup_and_get':
       var potential_holder = lookup(hash(data.key));
-      console.log("find and get lookup for", data.key, "node", potential_holder);
+
       if (potential_holder === peer.id) {
         sendMessage(data.initiator, { label: 'lookup_and_get_result', key: data.key, intention: data.intention, result: getFromLocalTable(data.key) });
       } else {
@@ -176,42 +230,21 @@ function onMsgReceived(sender, data) {
       break;
 
     case 'lookup_result':
-      console.log("lookup result for", data.key, "with intention", data.intention, "is", data.result);
-
       if (data.intention === 'find_successor') {
         successor = data.result;
         sendMessage(successor, { label: 'notify_successor' });
       }
 
       if (data.intention === 'find_finger') {
-        console.log("update finger", data.key, "with", data.result);
         fingersToFillLeft--;
         fingerTable.set(data.key, data.result);
 
         if (fingersToFillLeft == 0) {
-          // fill local table with own info
-          insertToLocalTable(name, peer.id);
-          insertToLocalTable(surname, peer.id);
-          insertToLocalTable(email, peer.id);
-
-          // find owner for our data
-          var potential_holder = lookup(hash(name));
-          if (potential_holder != peer.id) {
-            sendMessage(potential_holder, { label: 'lookup', key: hash(name), intention: 'insert_entry', initiator: peer.id });
-          }
-          potential_holder = lookup(hash(surname));
-          if (potential_holder != peer.id) {
-            sendMessage(potential_holder, { label: 'lookup', key: hash(surname), intention: 'insert_entry', initiator: peer.id });
-          }
-          potential_holder = lookup(hash(email));
-          if (potential_holder != peer.id) {
-            sendMessage(potential_holder, { label: 'lookup', key: hash(email), intention: 'insert_entry', initiator: peer.id });
-          }
+          fillLocalTable(false);
         }
       }
 
       if (data.intention === 'insert_entry') {
-        console.log('ask', data.result, 'to insert', data.key, 'with value', localTable[data.key]);
         sendMessage(sender, { label: 'insert_entry', key: data.key, value: localTable[data.key] });
         delete localTable[data.key];
       }
@@ -224,7 +257,7 @@ function onMsgReceived(sender, data) {
           sendMessage(data.result, {label: 'private_messages', messages: message_map[hash(data.key)]});
           delete message_map[hash(data.key)];
         } else {
-          $('#messages').append('<span class="filler">' + 'Attempt to send private message failed because no such user exists' + '</span>');
+          $('#messages').append('<span class="filler" style="background-color: #ff8c8c">' + 'Attempt to send private message failed because no such user exists' + '</span>');
         }
       }
 
@@ -233,8 +266,6 @@ function onMsgReceived(sender, data) {
 
     case 'notify_successor':
       var old_predecessor = predecessor;
-
-      console.log('predecessor updated from', old_predecessor, 'to', sender);
       predecessor = sender;
 
       if (old_predecessor != peer.id) {
@@ -242,17 +273,15 @@ function onMsgReceived(sender, data) {
       } else {
         successor = sender;
       }
-      var dataToMove = selectDataToMove(sender);
-      sendMessage(sender, { label: 'notify_new_peer_about_predecessor' , 'predecessor': old_predecessor,  'data': dataToMove });
+      sendMessage(sender, { label: 'notify_new_peer_about_predecessor' , 'predecessor': old_predecessor,  'data': selectDataToMove(sender) });
+
       break;
 
     case 'notify_predecessor':
-      console.log('successor updated from', successor, 'to', data.new_peer);
       successor = data.new_peer;
       break;
 
     case 'notify_new_peer_about_predecessor':
-      console.log('predecessor updated from', predecessor, 'to', data.predecessor);
       predecessor = data.predecessor;
 
       // update local table
@@ -260,30 +289,28 @@ function onMsgReceived(sender, data) {
         localTable[index] = data.data[index];
       }
 
-      sendMessage(successor, { label: 'update_fingers', new_peer: peer.id });
+      sendMessage(successor, { label: 'update_fingers_on_new_peer', new_peer: peer.id });
+
       break;
 
-    case 'update_fingers':
-      console.log("updating own fingers");
+    case 'update_fingers_on_new_peer':
       var new_peer = data.new_peer;
-      if (successor != new_peer) {
-        sendMessage(successor, data);
-      }
+      // notify successor about new peer as well
+      if (successor != new_peer) sendMessage(successor, data);
 
-      fixFingers(new_peer);
+      fixFingersOnNewPeer(new_peer);
 
-      if (successor == new_peer) {
-        sendMessage(successor, { label: 'fingers_update_finished'});
-      }
+      // the circle ended
+      if (successor == new_peer) sendMessage(successor, { label: 'fingers_update_finished'});
+
       break;
 
     case 'fingers_update_finished':
-      console.log("creating own fingers");
       fillFingerTable();
+
       break;
 
     case 'insert_entry':
-      console.log('insert key', data.key, 'with value', data.value);
       for (var i in data.value) {
          insertToLocalTable(data.value[i].key, data.value[i]);
       }
@@ -291,27 +318,20 @@ function onMsgReceived(sender, data) {
       break;
 
     case 'private_messages':
-      console.log('messages received: ', data.messages);
       for (var index in data.messages) {
-        $('#messages').append('<span class="filler">' + 'Personal Message from ' + sender + ': ' + data.messages[index] + '</span>');
+        displayMessage(sender, data.messages[index], true, true);
       }
       break;
 
     case 'public_message':
-      console.log("public message recieved");
-      if (successor != data.initiator) {
-        sendMessage(successor, data);
-      }
-
-      $('#messages').append('<span class="filler">' + 'Public Message from ' + sender + ': ' + data.message + '</span>');
-
+      // send the same message to successor
+      if (successor != data.initiator) sendMessage(successor, data);
+      displayMessage(sender, data.message, false, true);
       break;
 
-    case 'pred_dies':
-      console.log('predecessor dies', sender);
-
+    case 'predcessor_leaving':
       predecessor = data.predecessor;
-      sendMessage(successor, { label: 'update_fingers_del', deleted_peer: sender, new_holder: peer.id });
+      sendMessage(successor, { label: 'update_fingers_on_deleted_peer', deleted_peer: sender, new_holder: peer.id });
 
       for (i in data.data) {
         for (j in data.data[i]) {
@@ -319,41 +339,36 @@ function onMsgReceived(sender, data) {
         }
       }
 
-      fixFingersDel(sender, peer.id);
+      fixFingersOnDeletedPeer(sender, peer.id);
       break;
 
-    case 'update_fingers_del':
-      console.log("updating own fingers because of delete of node");
-      console.log(peer.id, data.deleted_peer, data.new_holder, successor);
+    case 'update_fingers_on_deleted_peer':
       if (successor != data.deleted_peer && successor != peer.id && successor != data.new_holder) {
         sendMessage(successor, data);
       } else if (successor == data.deleted_peer) {
-        console.log("update successor from", successor, "to", data.new_holder)
         successor = data.new_holder;
       }
 
-      fixFingersDel(data.deleted_peer, data.new_holder);
+      fixFingersOnDeletedPeer(data.deleted_peer, data.new_holder);
       break;
   }
 }
 
-function fixFingers(new_peer) {
+function fixFingersOnNewPeer(new_peer) {
   for (var i = 0; i < m; i += 1) {
-    var key_hash = (hash(peer.id) + Math.pow(2, i)) % Math.pow(2, m);
+    var key_hash = fingerHash(i);
     var old_finger = fingerTable.get(key_hash);
-    var old_dist = (Math.pow(2, m) - key_hash + hash(old_finger)) % Math.pow(2, m);
-    var new_dist = (Math.pow(2, m) - key_hash + hash(new_peer)) % Math.pow(2, m);
     console.log('Check fingers for', key_hash, '. Old:', old_finger, ', New:', new_peer);
-    if (new_dist < old_dist) {
+    if (distance(key_hash, hash(new_peer)) < distance(key_hash, hash(old_finger))) {
       console.log('Update finger', key_hash, 'from', old_finger, 'to', new_peer);
       fingerTable.set(key_hash, new_peer);
     }
   }
 }
 
-function fixFingersDel(deleted_peer, new_holder) {
+function fixFingersOnDeletedPeer(deleted_peer, new_holder) {
   for (var i = 0; i < m; i += 1) {
-    var key_hash = (hash(peer.id) + Math.pow(2, i)) % Math.pow(2, m);
+    var key_hash = fingerHash(i);
     console.log("Try update", key_hash, "from", fingerTable.get(key_hash), "because deleted", deleted_peer);
     if (fingerTable.get(key_hash) == deleted_peer) {
       console.log('Update finger', key_hash, 'from', deleted_peer, 'to', new_holder);
@@ -364,16 +379,12 @@ function fixFingersDel(deleted_peer, new_holder) {
 
 function fillFingerTable() {
   for (var i = 0; i < m; i += 1) {
-    var key_hash = (hash(peer.id) + Math.pow(2, i)) % Math.pow(2, m);
-    if ((hash(peer.id) > hash(successor) && (key_hash > hash(peer.id) || key_hash <= hash(successor)))
-      || (hash(peer.id) < hash(successor) && (key_hash > hash(peer.id) && key_hash <= hash(successor)))) {
-      console.log('Set 1', key_hash, 'to', successor);
+    var key_hash = fingerHash(i);
+    if (isBetweenClockwise(key_hash, hash(peer.id), hash(successor))) {
       fingersToFillLeft--;
       fingersFilledLocaly++;
       fingerTable.set(key_hash, successor);
-    } else if ((hash(predecessor) > hash(peer.id) && (key_hash > hash(predecessor) || key_hash <= hash(peer.id)))
-      || (hash(predecessor) < hash(peer.id) && (key_hash > hash(predecessor) && key_hash <= hash(peer.id)))) {
-      console.log('Set 2', key_hash, 'to', peer.id);
+    } else if (isBetweenClockwise(key_hash, hash(predecessor), hash(peer.id))) {
       fingersToFillLeft--;
       fingersFilledLocaly++;
       fingerTable.set(key_hash, peer.id);
@@ -383,25 +394,26 @@ function fillFingerTable() {
   }
 
   if (fingersFilledLocaly === m) {
-    // fill local table with own info
-    insertToLocalTable(name, peer.id);
-    insertToLocalTable(surname, peer.id);
-    insertToLocalTable(email, peer.id);
-
-    // find owner for our data
-    var potential_holder = lookup(hash(name));
-    if (potential_holder != peer.id) {
-      sendMessage(potential_holder, { label: 'lookup', key: hash(name), intention: 'insert_entry', initiator: peer.id });
-    }
-    potential_holder = lookup(hash(surname));
-    if (potential_holder != peer.id) {
-      sendMessage(potential_holder, { label: 'lookup', key: hash(surname), intention: 'insert_entry', initiator: peer.id });
-    }
-    potential_holder = lookup(hash(email));
-    if (potential_holder != peer.id) {
-      sendMessage(potential_holder, { label: 'lookup', key: hash(email), intention: 'insert_entry', initiator: peer.id });
-    }
+    fillLocalTable(false);
   }
+}
+
+/*
+
+User Interface
+
+*/
+
+function displayMessage(name, msg, isPersonal, isReceived) {
+  $('#messages').append(
+       '<span class="filler" style="background-color: ' + (isPersonal ? '#74fcba' : '#a1fff2') + '">'
+       + (isPersonal ? 'Personal Message' : 'Public message')
+       + (isReceived ? ' from ' : ' to ')
+       + (!isReceived && !isPersonal ? 'everyone' : name)
+       + ': ' 
+       + msg 
+       + '</span>'
+  );
 }
 
 $(document).ready(function() {
@@ -418,33 +430,20 @@ $(document).ready(function() {
 
     console.log('My hash:', hash(peer.id));
     for (var i = 0; i < m; i += 1) {
-      var key_hash = (hash(peer.id) + Math.pow(2, i)) % Math.pow(2, m);
-      console.log('Set', key_hash, 'to', peer.id);
-      fingerTable.set(key_hash, peer.id);
+      fingerTable.set(fingerHash(i), peer.id);
     }
 
-    // fill local table with own info
-    insertToLocalTable(name, peer.id);
-    insertToLocalTable(surname, peer.id);
-    insertToLocalTable(email, peer.id);
+    fillLocalTable(true);
   });
 
   $('#log_table').click(function() {
     console.log('Local Table:');
-    for (var i in localTable) {
-      console.log(localTable[i]);
-    }
-  });
-
-  $('#send_message').click(function() {
-     $('#messages').append('<div><span class="you">You: </span>' + msg
-          + '</div>');
+    for (var i in localTable) console.log(localTable[i]);
   });
 
   $('#send').submit(function(e) {
     e.preventDefault();
     var msg = $('#text').val();
-
     if (msg.startsWith('@')) {
       var name = msg.slice(1, msg.indexOf(' '));
       var potential_holder = lookup(hash(name));
@@ -455,27 +454,19 @@ $(document).ready(function() {
         message_map[hash(name)].push(msg.slice(msg.indexOf(' ')));
         sendMessage(potential_holder, { label: 'lookup_and_get', key: name, intention: 'send_msg', initiator: peer.id });
       } else {
-        var recepient = getFromLocalTable(name);
-        sendMessage(recepient, {label: 'private_messages', messages: [msg.slice(msg.indexOf(' '))]});
+        var recipient = getFromLocalTable(name);
+        sendMessage(recipient, {label: 'private_messages', messages: [msg.slice(msg.indexOf(' ') + 1)]});
       }
-      $('#messages').append('<span class="filler">' + 'Personal Message to ' + name + ': ' + msg.slice(msg.indexOf(' ')) + '</span>');
+      displayMessage(name, msg.slice(msg.indexOf(' ')), true, false);
+    } else if (msg.startsWith('/msg')) {
+      var message = msg.slice(msg.indexOf(' ') + 1);
+      var recipient = message.slice(0, message.indexOf(' '));
+      sendMessage(recipient, {label: 'private_messages', messages: [message.slice(message.indexOf(' ') + 1)]});
+      displayMessage(recipient, message.slice(message.indexOf(' ') + 1), true, false);
     } else {
       sendMessage(successor, {label: 'public_message', message: msg, initiator: peer.id});
-      $('#messages').append('<span class="filler">' + 'Broadcast: ' + msg + '</span>');
+      displayMessage(peer.id, msg, false, false);
     }
   });
 
 });
-
-// Make sure things clean up properly.
-window.onbeforeunload = function(e) {
-  sendMessage(successor, {label: 'pred_dies', data: localTable, predecessor: predecessor});
-
-};
-
-window.onunload = function(e) {
-  if (!!peer && !peer.destroyed) {
-    peer.destroy();
-  }
-};
-
