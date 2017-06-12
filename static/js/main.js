@@ -118,8 +118,6 @@ function lookup(key) {
 }
 
 function selectDataToMove(new_peer) {
-
-
   var key = hash(new_peer);
   var result = {};
   for (var key_hash in localTable) {
@@ -306,6 +304,35 @@ function onMsgReceived(sender, data) {
       }
 
       $('#messages').append('<span class="filler">' + 'Public Message from ' + sender + ': ' + data.message + '</span>');
+
+      break;
+
+    case 'pred_dies':
+      console.log('predecessor dies', sender);
+
+      predecessor = data.predecessor;
+      sendMessage(successor, { label: 'update_fingers_del', deleted_peer: sender, new_holder: peer.id });
+
+      for (i in data.data) {
+        for (j in data.data[i]) {
+          insertToLocalTable(data.data[i][j].key, data.data[i][j].value);
+        }
+      }
+
+      fixFingersDel(sender, peer.id);
+      break;
+
+    case 'update_fingers_del':
+      console.log("updating own fingers because of delete of node");
+      console.log(peer.id, data.deleted_peer, data.new_holder, successor);
+      if (successor != data.deleted_peer && successor != peer.id && successor != data.new_holder) {
+        sendMessage(successor, data);
+      } else if (successor == data.deleted_peer) {
+        console.log("update successor from", successor, "to", data.new_holder)
+        successor = data.new_holder;
+      }
+
+      fixFingersDel(data.deleted_peer, data.new_holder);
       break;
   }
 }
@@ -320,6 +347,17 @@ function fixFingers(new_peer) {
     if (new_dist < old_dist) {
       console.log('Update finger', key_hash, 'from', old_finger, 'to', new_peer);
       fingerTable.set(key_hash, new_peer);
+    }
+  }
+}
+
+function fixFingersDel(deleted_peer, new_holder) {
+  for (var i = 0; i < m; i += 1) {
+    var key_hash = (hash(peer.id) + Math.pow(2, i)) % Math.pow(2, m);
+    console.log("Try update", key_hash, "from", fingerTable.get(key_hash), "because deleted", deleted_peer);
+    if (fingerTable.get(key_hash) == deleted_peer) {
+      console.log('Update finger', key_hash, 'from', deleted_peer, 'to', new_holder);
+      fingerTable.set(key_hash, new_holder);
     }
   }
 }
@@ -430,8 +468,14 @@ $(document).ready(function() {
 });
 
 // Make sure things clean up properly.
-window.onunload = window.onbeforeunload = function(e) {
+window.onbeforeunload = function(e) {
+  sendMessage(successor, {label: 'pred_dies', data: localTable, predecessor: predecessor});
+
+};
+
+window.onunload = function(e) {
   if (!!peer && !peer.destroyed) {
     peer.destroy();
   }
 };
+
