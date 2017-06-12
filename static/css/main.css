@@ -64,6 +64,27 @@ h1 {
   color: #0C6BA1;
   font-weight: 600;
 }
+
+#name {
+  display: inline-block;
+  padding: 5px;
+  margin: 5px;
+  border: 1px solid #ccc;
+  background-color: #fff;
+  color: #0C6BA1;
+  font-weight: 600;
+}
+
+#email {
+  display: inline-block;
+  padding: 5px;
+  margin: 5px;
+  border: 1px solid #ccc;
+  background-color: #fff;
+  color: #0C6BA1;
+  font-weight: 600;
+}
+
 .warning {
   font-size: 12px;
   line-height: 20px;
